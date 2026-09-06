@@ -1,0 +1,7 @@
+- generic [ref=e2]:
+  - generic [ref=e3]:
+    - generic [ref=e4]: WP-ENV SITES
+    - generic [ref=e5]: loading…
+    - button "New site" [ref=e6] [cursor=pointer]
+    - button "Rescan" [ref=e7] [cursor=pointer]
+  - main

@@ -4,6 +4,8 @@
 
 A control panel for [wp-env](https://www.npmjs.com/package/@wordpress/env) WordPress dev sites on [Omarchy](https://omarchy.org). It discovers every wp-env project on the machine (any directory with a `.wp-env.json`), shows live status straight from Docker, and lets you create, start, stop, and open sites — from a desktop app, a taskbar widget, or the CLI. No terminal needed for any of it, including serving sites at real HTTPS domains like `https://my-project.site`.
 
+![wp-env control panel](docs/screenshot-app.png)
+
 ## Features
 
 - **One list of every wp-env project** on the machine, with live state, ports, favourites, and per-site logs that stream while a site starts.
@@ -68,6 +70,8 @@ Setup installs Caddy on `127.0.0.2:443` (a dedicated loopback address, so it coe
 - **Hide** — removes a site from the main list and the bar widget without stopping or deleting anything; the collapsible **Hidden** panel at the bottom restores it.
 
 ### Bar widget
+
+![wp-env bar widget](docs/screenshot-bar.png)
 
 `shell-plugin/wp-env-ui/` is the taskbar version of the control panel. Enable it with `omarchy plugin enable wp-env-ui` and add `{"id": "wp-env-ui"}` to a `bar.layout` section in `~/.config/omarchy/shell.json`.
 

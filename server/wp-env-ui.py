@@ -159,6 +159,29 @@ def docker_ports_by_name() -> dict[str, str]:
     return result
 
 
+# CSI/OSC escape sequences plus carriage-return redraws (progress bars) —
+# wp-env/npx output is full of them and they render as garbage in the UI.
+ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)")
+
+
+def clean_log_line(line: str) -> str:
+    return ANSI_RE.sub("", line).replace("\r\n", "\n").replace("\r", "\n")
+
+
+def project_info(project_dir: Path) -> dict:
+    """Raw wp-env config files for the detail panel (None when absent)."""
+    def read(name):
+        try:
+            data = json.loads((project_dir / name).read_text())
+            return data if isinstance(data, dict) else None
+        except (OSError, ValueError):
+            return None
+    return {
+        "config": read(".wp-env.json"),
+        "override": read(".wp-env.override.json"),
+    }
+
+
 def config_port(project_dir: Path) -> int:
     port = 8888
     for name in (".wp-env.json", ".wp-env.override.json"):
@@ -505,6 +528,7 @@ def start_job(path: str, action: str) -> bool:
         killer.start()
         # Stream output so /api/log shows progress while the job runs.
         for line in proc.stdout:
+            line = clean_log_line(line)
             with LOCK:
                 JOBS[path]["log"] = (JOBS[path]["log"] + line)[-LOG_LIMIT:]
         rc = proc.wait()
@@ -895,11 +919,17 @@ class Handler(BaseHTTPRequestHandler):
             )
         elif path == "/api/domains-status":
             self.send(200, domains_status())
+        elif path == "/api/info":
+            target = params.get("path", [""])[0]
+            if target not in {str(d) for d in known_dirs()}:
+                self.send(403, {"error": "unknown project path"})
+            else:
+                self.send(200, project_info(Path(target)))
         elif path == "/api/log":
             target = params.get("path", [""])[0]
             job = job_view(target)
-            if not job:
-                self.send(404, {"error": "no job for that project"})
+            if not job:  # no job yet this server run — empty, not an error
+                self.send(200, {"action": None, "log": ""})
             else:
                 self.send(200, {"action": job["action"], "log": job["log"]})
         else:

@@ -332,6 +332,42 @@ class CreateSiteTest(unittest.TestCase):
         self.assertEqual(mod.load_domains(), {})
 
 
+class CleanLogLineTest(unittest.TestCase):
+    def test_strips_ansi_and_carriage_returns(self):
+        self.assertEqual(
+            mod.clean_log_line("\x1b[32mok\x1b[0m done\r\n"), "ok done\n"
+        )
+        self.assertEqual(
+            mod.clean_log_line("progress 1\rprogress 2\r"),
+            "progress 1\nprogress 2\n",
+        )
+        self.assertEqual(
+            mod.clean_log_line("\x1b]0;title\x07plain"), "plain"
+        )
+        self.assertEqual(mod.clean_log_line("no escapes"), "no escapes")
+
+
+class ProjectInfoTest(unittest.TestCase):
+    def test_reads_config_and_override(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / ".wp-env.json").write_text('{"port": 9000, "core": null}')
+            info = mod.project_info(d)
+            self.assertEqual(info["config"]["port"], 9000)
+            self.assertIsNone(info["override"])
+            (d / ".wp-env.override.json").write_text('{"phpVersion": "8.3"}')
+            info = mod.project_info(d)
+            self.assertEqual(info["override"]["phpVersion"], "8.3")
+
+    def test_tolerates_garbage(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / ".wp-env.json").write_text("not json")
+            self.assertEqual(
+                mod.project_info(d), {"config": None, "override": None}
+            )
+
+
 class DomainOverrideTest(unittest.TestCase):
     def test_create_and_remove(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -772,11 +808,21 @@ class HttpApiTest(unittest.TestCase):
         )
         self.assertEqual(status, 403)
 
-    def test_log_without_job_is_404(self):
-        status, _, _ = self.request(
-            "GET", "/api/log?path=" + str(self.project)
+    def test_info_endpoint(self):
+        status, _, data = self.get_json(
+            "/api/info?path=" + str(self.project)
         )
-        self.assertEqual(status, 404)
+        self.assertEqual(status, 200)
+        self.assertEqual(data["config"]["port"], 9001)
+        status, _, _ = self.request("GET", "/api/info?path=/etc")
+        self.assertEqual(status, 403)
+
+    def test_log_without_job_is_empty(self):
+        status, _, data = self.get_json(
+            "/api/log?path=" + str(self.project)
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data, {"action": None, "log": ""})
 
     def test_domains_status(self):
         status, _, data = self.get_json("/api/domains-status")

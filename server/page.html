@@ -85,6 +85,38 @@
   .rowerr {
     color: var(--urgent); font-size: 11px; padding: 0 6px 6px 60px;
   }
+  .detail {
+    margin: 2px 6px 8px 34px; border: 1px solid var(--hairline);
+    border-radius: 8px; background: color-mix(in srgb, var(--fg) 3%, transparent);
+  }
+  .tabbar {
+    display: flex; gap: 2px; padding: 6px 8px 0;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .tab {
+    font-size: 10px; font-weight: 700; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--dim);
+    padding: 5px 10px 7px; border-radius: 6px 6px 0 0;
+  }
+  .tab:hover { color: var(--fg); background: var(--hover); }
+  .tab.active {
+    color: var(--accent);
+    box-shadow: inset 0 -2px 0 var(--accent);
+  }
+  .pane { padding: 10px 12px; }
+  .pane pre {
+    margin: 0; white-space: pre-wrap; word-break: break-word;
+    font-size: 11px; line-height: 1.45; max-height: 320px; overflow: auto;
+    color: var(--fg);
+  }
+  .kv { display: grid; grid-template-columns: 110px 1fr; gap: 3px 14px; }
+  .kv dt { color: var(--dim); font-size: 11px; margin: 0; }
+  .kv dd {
+    margin: 0; font-size: 11px; word-break: break-all;
+  }
+  .kv a { color: var(--accent); text-decoration: none; }
+  .kv a:hover { text-decoration: underline; }
+  .pane .placeholder { color: var(--dim); font-size: 11px; }
   .empty { color: var(--dim); text-align: center; padding: 2.5rem 0; }
 
   details.hiddenbox { margin-top: 10px; }
@@ -146,12 +178,6 @@
   </div>
   <main id="sites"></main>
 </div>
-
-<dialog id="logdlg">
-  <h3 id="logtitle"></h3>
-  <pre id="logbody"></pre>
-  <form method="dialog" class="btnrow"><button>Close</button></form>
-</dialog>
 
 <dialog id="domdlg">
   <h3>Local domain</h3>
@@ -219,7 +245,10 @@ const ICON = {
 };
 const busyPaths = new Set();   // paths with an /api/action call in flight
 const errors = new Map();      // path -> last action error message
-let logPath = null;            // path whose log the dialog is showing
+const expanded = new Set();    // paths with the detail panel open
+const activeTab = new Map();   // path -> 'overview' | 'logs' | 'config'
+const infoCache = new Map();   // path -> /api/info payload
+const logCache = new Map();    // path -> last fetched job log
 let domainSite = null;         // site the domain dialog is editing
 let hiddenOpen = false;
 
@@ -264,9 +293,12 @@ function card(site) {
 
   const info = document.createElement('div');
   info.className = 'info';
+  info.style.cursor = 'pointer';
+  info.title = expanded.has(site.path) ? 'Collapse details' : 'Expand details';
+  info.onclick = () => toggleExpand(site.path);
   const name = document.createElement('div');
   name.className = 'name';
-  name.textContent = site.name;
+  name.textContent = (expanded.has(site.path) ? '▾ ' : '▸ ') + site.name;
   info.appendChild(name);
   if (site.domain) {
     const dom = document.createElement('div');
@@ -328,7 +360,8 @@ function card(site) {
       btn(ICON.start, s === 'stopped' ? 'Start' : s,
           () => act(site, 'start'), { primary: true });
     }
-    if (site.job && site.job.has_log) btn(ICON.log, 'Log', () => showLog(site));
+    if (site.job && site.job.has_log)
+      btn(ICON.log, 'Log', () => openTab(site.path, 'logs'), { always: true });
     btn(ICON.domain, 'Local domain…', () => showDomain(site), { always: true });
     btn(ICON.hide, 'Hide from UI', () => setHidden(site, true), { always: true });
   }
@@ -339,8 +372,135 @@ function card(site) {
     e.textContent = errors.get(site.path);
     wrap.appendChild(e);
   }
+  if (expanded.has(site.path)) wrap.appendChild(detail(site));
   return wrap;
 }
+
+function toggleExpand(path) {
+  if (expanded.has(path)) {
+    expanded.delete(path);
+    infoCache.delete(path);
+  } else {
+    expanded.add(path);
+  }
+  refresh();
+}
+
+function openTab(path, tab) {
+  expanded.add(path);
+  activeTab.set(path, tab);
+  refresh();
+}
+
+function detail(site) {
+  const path = site.path;
+  const tab = activeTab.get(path) || 'overview';
+  const box = document.createElement('div');
+  box.className = 'detail';
+  const bar = document.createElement('div');
+  bar.className = 'tabbar';
+  for (const t of ['overview', 'logs', 'config']) {
+    const b = document.createElement('button');
+    b.className = 'tab' + (t === tab ? ' active' : '');
+    b.textContent = t;
+    b.onclick = () => openTab(path, t);
+    bar.appendChild(b);
+  }
+  box.appendChild(bar);
+  const pane = document.createElement('div');
+  pane.className = 'pane';
+  box.appendChild(pane);
+
+  if (tab === 'overview') renderOverview(site, pane);
+  else if (tab === 'logs') renderLogs(site, pane);
+  else renderConfig(site, pane);
+  return box;
+}
+
+function fetchInfo(path) {
+  if (infoCache.has(path)) return Promise.resolve(infoCache.get(path));
+  return api('/api/info?path=' + encodeURIComponent(path)).then((d) => {
+    infoCache.set(path, d);
+    return d;
+  });
+}
+
+function renderOverview(site, pane) {
+  const kv = document.createElement('dl');
+  kv.className = 'kv';
+  const add = (label, value, isLink) => {
+    const dt = document.createElement('dt');
+    dt.textContent = label;
+    const dd = document.createElement('dd');
+    if (isLink && value) {
+      const a = document.createElement('a');
+      a.href = value; a.target = '_blank'; a.textContent = value;
+      dd.appendChild(a);
+    } else {
+      dd.textContent = value == null ? '—' : String(value);
+    }
+    kv.appendChild(dt); kv.appendChild(dd);
+  };
+  add('State', site.state + (site.job && site.job.state === 'error' ? ' (last job failed)' : ''));
+  add('URL', site.state === 'running' ? site.url : null, true);
+  add('Domain', site.domain || 'none — use the link button to add one');
+  add('Path', site.path);
+  add('Port', ':' + site.port);
+  pane.appendChild(kv);
+  fetchInfo(site.path).then((d) => {
+    const merged = Object.assign({}, d.config || {}, d.override || {});
+    add('Tests port', merged.testsPort ? ':' + merged.testsPort : null);
+    add('PHP', merged.phpVersion || 'wp-env default');
+    add('WP core', merged.core || 'latest');
+    const plugins = (merged.plugins || []).length;
+    const themes = (merged.themes || []).length;
+    const mappings = Object.keys(merged.mappings || {}).length;
+    add('Mounts', `${plugins} plugin${plugins === 1 ? '' : 's'} · ${themes} theme${themes === 1 ? '' : 's'} · ${mappings} mapping${mappings === 1 ? '' : 's'}`);
+    add('Login', 'admin / password');
+  }).catch(() => {});
+}
+
+function renderLogs(site, pane) {
+  const pre = document.createElement('pre');
+  pre.dataset.logpane = site.path;
+  pre.textContent = logCache.get(site.path) || '(no job output yet — start or stop the site to see its log here)';
+  pane.appendChild(pre);
+  pre.scrollTop = pre.scrollHeight;
+  pollLog(site.path);
+}
+
+function renderConfig(site, pane) {
+  const pre = document.createElement('pre');
+  pre.textContent = 'loading…';
+  pane.appendChild(pre);
+  infoCache.delete(site.path); // config tab always shows fresh files
+  fetchInfo(site.path).then((d) => {
+    let out = '// .wp-env.json\n' + JSON.stringify(d.config, null, 2);
+    if (d.override) {
+      out += '\n\n// .wp-env.override.json\n' + JSON.stringify(d.override, null, 2);
+    }
+    pre.textContent = out;
+  }).catch((e) => { pre.textContent = e.message; });
+}
+
+async function pollLog(path) {
+  try {
+    const data = await api('/api/log?path=' + encodeURIComponent(path));
+    logCache.set(path, data.log || '(empty)');
+    const pre = document.querySelector(`pre[data-logpane="${CSS.escape(path)}"]`);
+    if (pre && pre.textContent !== logCache.get(path)) {
+      const atBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
+      pre.textContent = logCache.get(path);
+      if (atBottom) pre.scrollTop = pre.scrollHeight;
+    }
+  } catch (e) {}
+}
+
+setInterval(() => {
+  for (const path of expanded) {
+    if ((activeTab.get(path) || 'overview') === 'logs') pollLog(path);
+  }
+}, 1500);
 
 async function act(site, action) {
   busyPaths.add(site.path);
@@ -476,27 +636,6 @@ el('newform').onsubmit = async (ev) => {
   }
 };
 
-async function updateLog() {
-  if (!logPath) return;
-  try {
-    const data = await api('/api/log?path=' + encodeURIComponent(logPath));
-    const body = el('logbody');
-    const atBottom =
-      body.scrollTop + body.clientHeight >= body.scrollHeight - 8;
-    body.textContent = data.log || '(empty)';
-    if (atBottom) body.scrollTop = body.scrollHeight;
-  } catch (e) {}
-}
-
-async function showLog(site) {
-  logPath = site.path;
-  const data = await api('/api/log?path=' + encodeURIComponent(site.path));
-  el('logtitle').textContent = site.name + ' — ' + data.action;
-  el('logbody').textContent = data.log || '(empty)';
-  el('logdlg').showModal();
-  el('logbody').scrollTop = el('logbody').scrollHeight;
-}
-
 async function refresh(force) {
   try {
     const res = await fetch('/api/sites?all=1' + (force ? '&refresh=1' : ''));
@@ -506,7 +645,19 @@ async function refresh(force) {
     const sites = all.filter((s) => !s.hidden);
     const hiddenSites = all.filter((s) => s.hidden);
     const main = el('sites');
+    // full re-render loses log scroll positions; capture and restore them
+    const scrolls = new Map();
+    main.querySelectorAll('pre[data-logpane]').forEach((pre) => {
+      scrolls.set(pre.dataset.logpane, {
+        top: pre.scrollTop,
+        atBottom: pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8,
+      });
+    });
     main.replaceChildren(...sites.map(card));
+    main.querySelectorAll('pre[data-logpane]').forEach((pre) => {
+      const s = scrolls.get(pre.dataset.logpane);
+      if (s) pre.scrollTop = s.atBottom ? pre.scrollHeight : s.top;
+    });
     if (!sites.length) {
       main.innerHTML = '<div class="empty">' + (scanning
         ? 'Scanning for projects…'
@@ -536,8 +687,6 @@ async function refresh(force) {
 }
 
 el('rescan').onclick = () => refresh(true);
-el('logdlg').addEventListener('close', () => { logPath = null; });
-setInterval(updateLog, 1500);
 refresh();
 setInterval(refresh, 2500);
 </script>

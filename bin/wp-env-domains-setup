@@ -1,0 +1,109 @@
+#!/bin/bash
+#
+# wp-env-domains-setup
+#
+# One-time root setup for local HTTPS domains — any real-TLD-shaped domain
+# (my-project.site, client.dev, …), the URL shape external services (GCP
+# OAuth, GA4, YouTube API, …) accept, unlike .test/.localhost:
+#
+#   - Caddy serves 127.0.0.2:443/:80 with a locally-trusted CA and exposes
+#     its admin API on 127.0.0.1:2029; the wp-env-ui server syncs
+#     reverse-proxy routes as sites start and stop
+#   - domain resolution is plain /etc/hosts entries (read natively by every
+#     resolver), managed by a small root-owned helper; a sudoers rule scoped
+#     to exactly that helper lets the wp-env-ui server add and remove
+#     domains afterwards with no further prompts
+#
+# Everything binds dedicated loopback addresses/ports (127.0.0.2, :2029), so
+# it coexists with other local proxies on 127.0.0.1 (e.g. a project's own
+# dockerized Caddy).
+#
+# Idempotent; run with sudo — or click "Set up local domains" in the
+# control panel, which runs this for you.
+
+set -euo pipefail
+
+[[ $EUID -eq 0 ]] || { echo "Run with sudo: sudo wp-env-domains-setup" >&2; exit 1; }
+
+SETUP_USER="${SUDO_USER:-$(logname 2>/dev/null || echo root)}"
+PROXY_ADDR="127.0.0.2"   # Caddy serves sites here
+ADMIN="127.0.0.1:2029"   # Caddy admin API (2019 is often taken by other stacks)
+HELPER_DIR="/usr/local/lib/wp-env-ui"
+
+script_dir="$(dirname "$(readlink -f "$0")")"
+if [[ -f "$script_dir/../libexec/wp-env-hosts-helper" ]]; then
+  APP_DIR="$(readlink -f "$script_dir/..")"
+else
+  APP_DIR="/usr/share/wp-env-ui"
+fi
+
+echo "== packages =="
+pacman -S --needed --noconfirm caddy
+
+echo "== cleaning up artifacts from earlier dnsmasq-based setups (if any) =="
+if [[ -f /etc/dnsmasq.d/wp-env.conf ]]; then
+  rm -f /etc/dnsmasq.d/wp-env.conf
+  systemctl disable --now dnsmasq 2>/dev/null || true
+fi
+rm -f /etc/systemd/resolved.conf.d/wp-env.conf
+if [[ -f /etc/systemd/system/wp-env-dns.service ]]; then
+  systemctl disable --now wp-env-dns 2>/dev/null || true
+  rm -f /etc/systemd/system/wp-env-dns.service
+fi
+ip link del wpenv0 2>/dev/null || true
+systemctl daemon-reload
+systemctl try-restart systemd-resolved 2>/dev/null || true
+
+echo "== hosts helper + sudoers rule (user: $SETUP_USER) =="
+install -d -o root -g root -m 755 "$HELPER_DIR"
+install -o root -g root -m 755 \
+  "$APP_DIR/libexec/wp-env-hosts-helper" "$HELPER_DIR/hosts-helper"
+echo "$SETUP_USER ALL=(root) NOPASSWD: $HELPER_DIR/hosts-helper" \
+  >/etc/sudoers.d/wp-env-ui
+chmod 440 /etc/sudoers.d/wp-env-ui
+visudo -c -f /etc/sudoers.d/wp-env-ui >/dev/null
+
+echo "== caddy: admin API on $ADMIN, sites on $PROXY_ADDR:443 =="
+install -d /etc/caddy
+cat >/etc/caddy/wp-env.json <<EOF
+{
+  "admin": { "listen": "$ADMIN" },
+  "apps": {
+    "http": {
+      "servers": {
+        "wpenv": {
+          "listen": ["$PROXY_ADDR:443", "$PROXY_ADDR:80"],
+          "routes": []
+        }
+      }
+    },
+    "tls": {
+      "automation": {
+        "policies": [ { "issuers": [ { "module": "internal" } ] } ]
+      }
+    }
+  }
+}
+EOF
+mkdir -p /etc/systemd/system/caddy.service.d
+cat >/etc/systemd/system/caddy.service.d/wp-env.conf <<'EOF'
+# Managed by wp-env-domains-setup: run Caddy from the wp-env JSON config so
+# the wp-env-ui server can manage routes through the admin API.
+[Service]
+ExecStart=
+ExecStart=/usr/bin/caddy run --environ --config /etc/caddy/wp-env.json
+ExecReload=
+ExecReload=/usr/bin/caddy reload --config /etc/caddy/wp-env.json --force
+EOF
+systemctl daemon-reload
+systemctl enable --now caddy
+systemctl restart caddy
+
+echo "== trust the local CA (system store) =="
+sleep 1
+caddy trust --address "$ADMIN" ||
+  echo "caddy trust failed — run 'sudo caddy trust --address $ADMIN' after Caddy is up" >&2
+
+echo
+echo "Done. Assign any domain to a site from the wp-env control panel"
+echo "(Domain button) — it is added to /etc/hosts and proxied automatically."

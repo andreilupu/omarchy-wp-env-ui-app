@@ -1,0 +1,58 @@
+#!/bin/bash
+#
+# wp-env-launch <slug>
+#
+# Starts the wp-env site living in $SITES_DIR/<slug> (if not already up)
+# and opens it as an Omarchy app-mode browser window.
+#
+# Designed to be the Exec= target of a .desktop entry, so it must work
+# without a login shell: PATH is fixed up for mise-managed node below.
+
+set -uo pipefail
+
+SITES_DIR="${WP_ENV_SITES_DIR:-$HOME/workspace/wordpress/omarchy/sites}"
+
+# .desktop launches don't source the shell profile; mise provides node/npx.
+export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
+
+die() {
+  notify-send -u critical "wp-env" "$1" 2>/dev/null
+  echo "wp-env-launch: $1" >&2
+  exit 1
+}
+
+slug="${1:-}"
+[[ -n "$slug" ]] || die "Usage: wp-env-launch <slug>"
+
+site_dir="$SITES_DIR/$slug"
+config="$site_dir/.wp-env.json"
+[[ -f "$config" ]] || die "No site '$slug' — expected $config"
+
+port=$(jq -r '.port // 8888' "$config")
+url="http://localhost:$port"
+log="$site_dir/wp-env-launch.log"
+
+site_up() {
+  curl -fsS --max-time 2 -o /dev/null "$url"
+}
+
+if ! site_up; then
+  notify-send "wp-env" "Starting $slug — first run can take a few minutes…" 2>/dev/null
+
+  command -v npx >/dev/null || die "npx not found on PATH (is mise/node installed?)"
+
+  if ! (cd "$site_dir" && npx @wordpress/env start) >"$log" 2>&1; then
+    die "wp-env start failed for $slug — see $log"
+  fi
+
+  # wp-env start blocks until ready, but give the web server a safety margin.
+  for _ in $(seq 1 30); do
+    site_up && break
+    sleep 1
+  done
+  site_up || die "$slug started but $url is not responding — see $log"
+
+  notify-send "wp-env" "$slug is up at $url" 2>/dev/null
+fi
+
+exec omarchy-launch-webapp "$url"

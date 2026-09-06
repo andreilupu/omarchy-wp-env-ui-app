@@ -1,0 +1,77 @@
+#!/bin/bash
+#
+# wp-env-ui-setup
+#
+# Per-user setup (safe to re-run, e.g. after an update):
+#   - installs/enables the wp-env-ui systemd user service (and restarts it so
+#     a running server picks up new code)
+#   - installs the "wp-env" launcher entry via omarchy-webapp-install
+#   - copies the bar widget into ~/.config/omarchy/plugins/
+#
+# Works for both install layouts: a git checkout (scripts symlinked into
+# ~/.local/bin by install.sh) and the Arch package (/usr/share/wp-env-ui).
+
+set -euo pipefail
+
+script_dir="$(dirname "$(readlink -f "$0")")"
+if [[ -f "$script_dir/../server/wp-env-ui.py" ]]; then
+  APP_DIR="$(readlink -f "$script_dir/..")"
+else
+  APP_DIR="/usr/share/wp-env-ui"
+fi
+[[ -f "$APP_DIR/server/wp-env-ui.py" ]] || {
+  echo "wp-env-ui-setup: cannot find the app files (looked in $APP_DIR)" >&2
+  exit 1
+}
+
+PORT="${WP_ENV_UI_PORT:-8710}"
+SITES_DIR="${WP_ENV_SITES_DIR:-$HOME/workspace/wordpress/omarchy/sites}"
+mkdir -p "$SITES_DIR"
+
+# Version-stable executable paths for the systemd unit and .desktop entry:
+# a mise-managed install lives in a versioned (or content-addressed) directory
+# that changes on every upgrade, so point at the shims instead. readlink -f
+# may resolve into mise's store (e.g. http-tarballs/) rather than installs/,
+# so match the mise data dir broadly.
+if [[ "$APP_DIR" == *"/mise/"* ]]; then
+  SHIMS="$HOME/.local/share/mise/shims"
+  SERVER_BIN="$SHIMS/wp-env-ui-server"
+  UI_BIN="$SHIMS/wp-env-ui"
+else
+  SERVER_BIN="$APP_DIR/bin/wp-env-ui-server"
+  UI_BIN="$script_dir/wp-env-ui"
+fi
+
+# systemd user service: keeps the panel server always warm (instant app
+# start) with restart-on-failure + journal logging.
+if command -v systemctl >/dev/null && systemctl --user show-environment &>/dev/null; then
+  if [[ ! -f /usr/lib/systemd/user/wp-env-ui.service ]]; then
+    # Dev/mise install: generate the unit with a stable server path baked in.
+    mkdir -p "$HOME/.config/systemd/user"
+    sed "s|@SERVER_BIN@|$SERVER_BIN|" "$APP_DIR/systemd/wp-env-ui.service.in" \
+      >"$HOME/.config/systemd/user/wp-env-ui.service"
+    systemctl --user daemon-reload
+  fi
+  systemctl --user enable --now wp-env-ui.service || true
+  systemctl --user try-restart wp-env-ui.service || true # pick up updated code
+  echo "systemd user service wp-env-ui.service enabled + (re)started"
+fi
+
+# Control-panel launcher entry (optional; needs omarchy)
+if command -v omarchy-webapp-install >/dev/null; then
+  omarchy-webapp-install "wp-env" "http://localhost:$PORT" \
+    "$APP_DIR/icons/wordpress.png" "$UI_BIN" || true
+  echo "Installed 'wp-env' launcher entry"
+fi
+
+# Omarchy shell bar widget (optional; needs omarchy-shell)
+if [[ -d "$HOME/.config/omarchy" ]]; then
+  # Plugin folders may not contain symlinks, so copy (re-run to sync changes).
+  rm -rf "$HOME/.config/omarchy/plugins/lupu.wp-env" # pre-1.1 plugin id
+  mkdir -p "$HOME/.config/omarchy/plugins/wp-env-ui"
+  cp -f "$APP_DIR/shell-plugin/wp-env-ui/"* "$HOME/.config/omarchy/plugins/wp-env-ui/"
+  echo "Copied bar plugin wp-env-ui -> ~/.config/omarchy/plugins/"
+  echo "Enable it with: omarchy plugin enable wp-env-ui"
+fi
+
+echo "wp-env-ui setup complete."

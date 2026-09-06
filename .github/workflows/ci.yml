@@ -1,0 +1,45 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Shell syntax check
+        run: bash -n install.sh bin/*
+      - name: Unit + API tests
+        run: python3 -m unittest discover -s tests -v
+
+  release:
+    # Tag a release with `git tag v1.1.0 && git push --tags`. The tarball
+    # asset is what the mise github backend installs; the AUR PKGBUILD uses
+    # the source tag archive.
+    needs: test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build release tarball
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          tar czf "omarchy-wp-env-ui-$version.tar.gz" \
+            bin libexec server icons shell-plugin systemd LICENSE README.md
+          sha256sum "omarchy-wp-env-ui-$version.tar.gz" \
+            >"omarchy-wp-env-ui-$version.tar.gz.sha256"
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            omarchy-wp-env-ui-*.tar.gz
+            omarchy-wp-env-ui-*.tar.gz.sha256

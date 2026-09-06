@@ -1,0 +1,46 @@
+# Maintainer: Andrei Lupu <euthelup@gmail.com>
+#
+# To publish to the AUR: push a v$pkgver git tag, run `updpkgsums` to fill in
+# the checksum, then `makepkg --printsrcinfo > .SRCINFO` and push both files
+# to the AUR repo. Test locally with `makepkg -si` from this directory.
+
+pkgname=omarchy-wp-env-ui
+pkgver=1.1.0
+pkgrel=1
+pkgdesc="wp-env control panel for Omarchy: web UI, bar widget, and CLI helpers for local WordPress dev sites"
+arch=('any')
+url="https://github.com/andreilupu/omarchy-wp-env-ui-app"
+license=('MIT')
+depends=('python' 'curl' 'jq' 'docker')
+optdepends=(
+  'fd: faster project scanning'
+  'nodejs: runs wp-env via npx (alternatively provide node through mise)'
+  'npm: provides npx'
+  'libnotify: desktop notifications from the CLI helpers'
+  'caddy: local https domains via wp-env-domains-setup'
+  'dnsmasq: local https domains via wp-env-domains-setup'
+)
+install="$pkgname.install"
+source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+  cd "omarchy-wp-env-ui-app-$pkgver"
+
+  local app="$pkgdir/usr/share/wp-env-ui"
+
+  install -Dm755 bin/* -t "$pkgdir/usr/bin"
+  install -Dm755 libexec/wp-env-hosts-helper -t "$app/libexec"
+  install -Dm644 server/wp-env-ui.py server/page.html -t "$app/server"
+  install -Dm644 icons/wordpress.png -t "$app/icons"
+  install -Dm644 shell-plugin/wp-env-ui/* -t "$app/shell-plugin/wp-env-ui"
+  install -Dm644 systemd/wp-env-ui.service.in -t "$app/systemd"
+
+  sed 's|@SERVER_BIN@|/usr/bin/wp-env-ui-server|' systemd/wp-env-ui.service.in \
+    >wp-env-ui.service
+  install -Dm644 wp-env-ui.service \
+    "$pkgdir/usr/lib/systemd/user/wp-env-ui.service"
+
+  install -Dm644 LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
+  install -Dm644 README.md -t "$pkgdir/usr/share/doc/$pkgname"
+}

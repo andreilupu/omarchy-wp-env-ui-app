@@ -1,0 +1,34 @@
+#!/bin/bash
+#
+# wp-env-unregister-site <slug> [--purge]
+#
+# Removes the launcher .desktop entry for a site. omarchy-webapp-remove
+# can't see these entries (it only lists Exec lines containing
+# omarchy-launch-webapp), so we find ours by the wp-env-launch Exec line.
+# --purge also stops the site and deletes its directory under $SITES_DIR.
+
+set -uo pipefail
+
+SITES_DIR="${WP_ENV_SITES_DIR:-$HOME/workspace/wordpress/omarchy/sites}"
+APPS_DIR="$HOME/.local/share/applications"
+
+slug="${1:-}"
+[[ -n "$slug" ]] || { echo "Usage: wp-env-unregister-site <slug> [--purge]" >&2; exit 1; }
+
+found=0
+for file in "$APPS_DIR"/*.desktop; do
+  [[ -f "$file" ]] || continue
+  if grep -q "^Exec=.*wp-env-launch $slug\$" "$file"; then
+    rm "$file"
+    echo "Removed $(basename "$file")"
+    found=1
+  fi
+done
+[[ $found -eq 1 ]] || echo "No launcher entry found for '$slug'."
+
+if [[ "${2:-}" == "--purge" && -d "$SITES_DIR/$slug" ]]; then
+  export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
+  (cd "$SITES_DIR/$slug" && npx @wordpress/env destroy <<<"y") || true
+  rm -rf "$SITES_DIR/$slug"
+  echo "Destroyed wp-env environment and removed $SITES_DIR/$slug"
+fi

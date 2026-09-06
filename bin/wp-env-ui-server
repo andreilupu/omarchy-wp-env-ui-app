@@ -1,0 +1,24 @@
+#!/bin/bash
+#
+# wp-env-ui-server
+#
+# Runs the control-panel server in the foreground. Stable ExecStart target
+# for the systemd user unit in every install layout: git checkout,
+# /usr/share/wp-env-ui (Arch package), or a mise-managed install — mise's
+# shim path survives version upgrades while the versioned install dir does
+# not, so the unit points here (via the shim) rather than at the server file.
+
+set -uo pipefail
+
+script_dir="$(dirname "$(readlink -f "$0")")"
+if [[ -f "$script_dir/../server/wp-env-ui.py" ]]; then
+  SERVER="$script_dir/../server/wp-env-ui.py"
+else
+  SERVER="/usr/share/wp-env-ui/server/wp-env-ui.py"
+fi
+
+# systemd/.desktop contexts don't source the shell profile; mise provides
+# python/node for some users.
+export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
+
+exec python3 "$SERVER"

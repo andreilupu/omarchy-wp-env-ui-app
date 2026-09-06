@@ -1,0 +1,49 @@
+#!/bin/bash
+#
+# wp-env-hosts-helper check | add <domain> | remove <domain>
+#
+# Manages the wp-env block in /etc/hosts, mapping local dev domains to the
+# wp-env Caddy proxy address (127.0.0.2). Installed root-owned at
+# /usr/local/lib/wp-env-ui/hosts-helper by wp-env-domains-setup, together
+# with a sudoers rule that lets the user run exactly this helper without a
+# password — that is the entire privileged surface, so it is deliberately
+# strict: one fixed IP, a tight domain regex, and edits confined to the
+# marked block.
+#
+# WP_ENV_HOSTS_FILE overrides the hosts path (tests only).
+
+set -euo pipefail
+
+HOSTS="${WP_ENV_HOSTS_FILE:-/etc/hosts}"
+IP="127.0.0.2"
+BEGIN="# >>> wp-env-ui domains — managed, do not edit >>>"
+END="# <<< wp-env-ui domains <<<"
+
+cmd="${1:-}"
+domain="${2:-}"
+
+case "$cmd" in
+  check) exit 0 ;;
+  add|remove) ;;
+  *) echo "usage: wp-env-hosts-helper check | add <domain> | remove <domain>" >&2
+     exit 2 ;;
+esac
+
+[[ "$domain" =~ ^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,24}$ ]] ||
+  { echo "invalid domain '$domain'" >&2; exit 2; }
+
+grep -qxF "$BEGIN" "$HOSTS" || printf '\n%s\n%s\n' "$BEGIN" "$END" >>"$HOSTS"
+
+tmp=$(mktemp "$HOSTS.wp-env.XXXXXX")
+awk -v begin="$BEGIN" -v end="$END" -v ip="$IP" -v domain="$domain" \
+    -v cmd="$cmd" '
+  $0 == begin { inside = 1; print; next }
+  $0 == end {
+    if (cmd == "add" && !found) print ip " " domain
+    inside = 0; print; next
+  }
+  inside && $2 == domain { found = 1; if (cmd == "remove") next }
+  { print }
+' "$HOSTS" >"$tmp"
+chmod 644 "$tmp"
+mv "$tmp" "$HOSTS"

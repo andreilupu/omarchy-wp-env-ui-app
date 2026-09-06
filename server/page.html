@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>wp-env</title>
+<style>
+  /* Fallback palette (no Omarchy theme found); the server injects the live
+     Omarchy theme palette below, overriding these. */
+  :root {
+    color-scheme: dark;
+    --bg: #101315; --panel: #0c0e10; --fg: #cacccc; --muted: #707880;
+    --accent: #8d8d8d; --urgent: #a55555; --ok: #7aa77a; --warn: #c9a545;
+  }
+  /*__THEME__*/
+  :root {
+    --hover: color-mix(in srgb, var(--fg) 9%, transparent);
+    --hairline: color-mix(in srgb, var(--fg) 14%, transparent);
+    --dim: color-mix(in srgb, var(--fg) 55%, var(--bg));
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 4vh 1rem; background: var(--bg); color: var(--fg);
+    font: 13px/1.5 monospace;
+    display: flex; justify-content: center; align-items: flex-start;
+  }
+  .panel {
+    width: min(720px, 100%);
+    background: var(--panel); border: 1px solid var(--hairline);
+    border-radius: 12px; padding: 14px 14px 10px;
+  }
+  .phead {
+    display: flex; align-items: center; gap: 10px;
+    padding: 2px 6px 10px;
+  }
+  .ptitle {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.18em;
+    color: var(--fg);
+  }
+  .sub { flex: 1; color: var(--dim); font-size: 11px; }
+  button {
+    font: inherit; background: none; border: none; color: var(--fg);
+    cursor: pointer; border-radius: 7px;
+  }
+  button:disabled { opacity: 0.4; cursor: default; }
+  .icon {
+    width: 28px; height: 28px; line-height: 1; font-size: 13px;
+    color: var(--dim); display: inline-flex;
+    align-items: center; justify-content: center; flex: none;
+  }
+  .icon:hover:not(:disabled) { color: var(--accent); background: var(--hover); }
+  .icon.danger:hover:not(:disabled) { color: var(--urgent); }
+  .icon.primary { color: var(--accent); }
+
+  .row {
+    display: flex; align-items: center; gap: 10px;
+    min-height: 44px; padding: 5px 6px; border-radius: 8px;
+  }
+  .row:hover { background: var(--hover); }
+  .star { font-size: 14px; color: var(--dim); padding: 2px; flex: none; }
+  .star.on, .star:hover { color: var(--warn); }
+  .dot {
+    width: 8px; height: 8px; border-radius: 50%; flex: none;
+    background: var(--dim);
+  }
+  .dot.running { background: var(--ok); }
+  .dot.starting, .dot.stopping { background: var(--warn); }
+  .dot.error { background: var(--urgent); }
+  .info { flex: 1; min-width: 0; }
+  .name {
+    font-weight: 600; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .meta {
+    color: var(--muted); font-size: 11px; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; direction: rtl;
+    text-align: left;
+  }
+  .meta > span { unicode-bidi: plaintext; }
+  .domain a { color: var(--accent); font-size: 11px; text-decoration: none; }
+  .domain a:hover { text-decoration: underline; }
+  .port { color: var(--dim); font-size: 11px; flex: none; }
+  .busy { color: var(--warn); font-size: 11px; flex: none; }
+  .actions { display: flex; gap: 2px; flex: none; }
+  .rowerr {
+    color: var(--urgent); font-size: 11px; padding: 0 6px 6px 60px;
+  }
+  .empty { color: var(--dim); text-align: center; padding: 2.5rem 0; }
+
+  details.hiddenbox { margin-top: 10px; }
+  details.hiddenbox > summary {
+    cursor: pointer; user-select: none; list-style: none;
+    font-size: 11px; font-weight: 700; letter-spacing: 0.18em;
+    color: var(--dim); padding: 8px 6px 4px;
+  }
+  details.hiddenbox > summary::before { content: "▸ "; }
+  details.hiddenbox[open] > summary::before { content: "▾ "; }
+  details.hiddenbox .row { opacity: 0.75; }
+
+  dialog {
+    background: var(--panel); color: var(--fg);
+    border: 1px solid var(--hairline); border-radius: 12px;
+    font: inherit; padding: 16px; max-width: 440px; width: 92vw;
+  }
+  dialog::backdrop { background: rgba(0, 0, 0, 0.55); }
+  dialog h3 {
+    margin: 0 0 12px; font-size: 11px; font-weight: 700;
+    letter-spacing: 0.18em; text-transform: uppercase;
+  }
+  dialog#logdlg { max-width: 780px; }
+  dialog pre {
+    white-space: pre-wrap; word-break: break-word; font-size: 11px;
+    max-height: 60vh; overflow: auto; background: var(--bg);
+    border: 1px solid var(--hairline); border-radius: 8px; padding: 10px;
+  }
+  dialog label { display: block; font-weight: 600; }
+  dialog input {
+    display: block; width: 100%; margin-top: 6px; font: inherit;
+    padding: 7px 10px; border-radius: 7px; outline: none;
+    border: 1px solid var(--hairline); background: var(--bg);
+    color: var(--fg);
+  }
+  dialog input:focus { border-color: var(--accent); }
+  dialog .hint {
+    display: block; color: var(--muted); font-size: 11px; margin-top: 8px;
+  }
+  dialog .carderr { color: var(--urgent); font-size: 11px; }
+  dialog .btnrow { text-align: right; margin: 14px 0 0; }
+  dialog .btnrow button {
+    padding: 5px 14px; border: 1px solid var(--hairline); margin-left: 6px;
+  }
+  dialog .btnrow button:hover { border-color: var(--accent); }
+  dialog .btnrow button.primary {
+    background: var(--accent); border-color: var(--accent);
+    color: var(--bg); font-weight: 600;
+  }
+</style>
+</head>
+<body>
+<div class="panel">
+  <div class="phead">
+    <span class="ptitle">WP-ENV SITES</span>
+    <span class="sub" id="sub">loading…</span>
+    <button class="icon" id="newsite" title="New site"></button>
+    <button class="icon" id="rescan" title="Rescan"></button>
+  </div>
+  <main id="sites"></main>
+</div>
+
+<dialog id="logdlg">
+  <h3 id="logtitle"></h3>
+  <pre id="logbody"></pre>
+  <form method="dialog" class="btnrow"><button>Close</button></form>
+</dialog>
+
+<dialog id="domdlg">
+  <h3>Local domain</h3>
+  <div id="domsetupbox" hidden>
+    <span class="hint">Local domains aren't set up on this machine yet.
+    One click installs a local HTTPS proxy with a trusted certificate and a
+    helper that maps your chosen domains to it — you'll be asked for your
+    password once.</span>
+    <pre id="domsetuplog" hidden style="max-height:180px"></pre>
+    <div class="carderr" id="domsetuperr" hidden></div>
+    <div class="btnrow">
+      <button type="button" class="primary" id="domsetupbtn">Set up local domains</button>
+    </div>
+    <hr style="border:none;border-top:1px solid var(--hairline);margin:14px 0">
+  </div>
+  <form id="domform">
+    <label>Domain <input id="dominput" type="text" autocomplete="off"
+           placeholder="my-site.__DOMAIN_BASE__"></label>
+    <span class="hint">Any real-TLD domain you like — <code>my-project.site</code>,
+    <code>client.dev</code>, a subdomain — served at https://&lt;domain&gt;
+    through the local Caddy proxy with a trusted certificate: a URL shape
+    external APIs (GCP, GA4, …) accept. Changing it restarts a running site
+    so WordPress adopts the new URL.</span>
+    <div class="carderr" id="domerr" hidden></div>
+    <div class="btnrow">
+      <button type="button" id="domcancel">Cancel</button>
+      <button type="button" id="domremove">Remove</button>
+      <button type="submit" class="primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="newdlg">
+  <h3>New WordPress site</h3>
+  <form id="newform">
+    <label>Site name
+      <input id="newslug" type="text" required autocomplete="off"
+             pattern="[a-z0-9][a-z0-9-]{0,40}" maxlength="41"
+             placeholder="my-site"
+             title="lowercase letters, digits, and hyphens">
+    </label>
+    <span class="hint">lowercase letters, digits, and hyphens — a free port
+    is picked automatically and the site starts right away (the first start
+    downloads WordPress and can take a few minutes)</span>
+    <div class="carderr" id="newerr" hidden></div>
+    <div class="btnrow">
+      <button type="button" id="newcancel">Cancel</button>
+      <button type="submit" class="primary" id="newsubmit">Create &amp; start</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+const el = (id) => document.getElementById(id);
+const DOMAIN_BASE = '__DOMAIN_BASE__';
+const ICON = {
+  open: '',      //  globe — open site
+  admin: '',     //  person — wp-admin
+  stop: '',      //  stop
+  start: '',     //  play
+  log: '',       //  file-text
+  domain: '',    //  link
+  hide: '',      //  eye-slash
+  restore: '',   //  eye
+};
+const busyPaths = new Set();   // paths with an /api/action call in flight
+const errors = new Map();      // path -> last action error message
+let logPath = null;            // path whose log the dialog is showing
+let domainSite = null;         // site the domain dialog is editing
+let hiddenOpen = false;
+
+async function api(url, opts) {
+  const res = await fetch(url, opts);
+  if (!res.ok) {
+    const text = await res.text();
+    let msg = text;
+    try { msg = JSON.parse(text).error || text; } catch (e) {}
+    throw new Error(msg);
+  }
+  return res.json();
+}
+
+function post(url, body) {
+  return api(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+}
+
+function card(site) {
+  const s = site.state;
+  const err = site.job && site.job.state === 'error';
+  const wrap = document.createElement('div');
+  const div = document.createElement('div');
+  div.className = 'row';
+  wrap.appendChild(div);
+
+  const star = document.createElement('button');
+  star.className = 'star' + (site.favorite ? ' on' : '');
+  star.textContent = site.favorite ? '★' : '☆';
+  star.title = site.favorite ? 'Remove favourite' : 'Mark as favourite';
+  star.onclick = () => fav(site);
+  div.appendChild(star);
+
+  const dot = document.createElement('span');
+  dot.className = 'dot ' + (err ? 'error' : s);
+  dot.title = err ? 'last job failed' : s;
+  div.appendChild(dot);
+
+  const info = document.createElement('div');
+  info.className = 'info';
+  const name = document.createElement('div');
+  name.className = 'name';
+  name.textContent = site.name;
+  info.appendChild(name);
+  if (site.domain) {
+    const dom = document.createElement('div');
+    dom.className = 'domain';
+    const a = document.createElement('a');
+    a.href = 'https://' + site.domain;
+    a.target = '_blank';
+    a.textContent = 'https://' + site.domain;
+    dom.appendChild(a);
+    info.appendChild(dom);
+  } else {
+    const meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.title = site.path;
+    const span = document.createElement('span');
+    span.textContent = site.path;
+    meta.appendChild(span);
+    info.appendChild(meta);
+  }
+  div.appendChild(info);
+
+  if (s === 'starting' || s === 'stopping') {
+    const busyEl = document.createElement('span');
+    busyEl.className = 'busy';
+    busyEl.textContent = s + '…';
+    div.appendChild(busyEl);
+  }
+
+  const port = document.createElement('span');
+  port.className = 'port';
+  port.textContent = ':' + site.port;
+  div.appendChild(port);
+
+  const actions = document.createElement('span');
+  actions.className = 'actions';
+  div.appendChild(actions);
+
+  const disabled = busyPaths.has(site.path) || s === 'starting' || s === 'stopping';
+  const btn = (icon, title, fn, opts = {}) => {
+    const b = document.createElement('button');
+    b.className = 'icon' + (opts.primary ? ' primary' : '')
+      + (opts.danger ? ' danger' : '');
+    b.textContent = icon;
+    b.title = title;
+    b.disabled = disabled && !opts.always;
+    b.onclick = fn;
+    actions.appendChild(b);
+  };
+  if (site.hidden) {
+    btn(ICON.restore, 'Restore', () => setHidden(site, false),
+        { primary: true, always: true });
+    if (s === 'running') btn(ICON.stop, 'Stop', () => act(site, 'stop'), { danger: true });
+  } else {
+    if (s === 'running') {
+      btn(ICON.open, 'Open site', () => act(site, 'open'), { primary: true });
+      btn(ICON.admin, 'Open wp-admin', () => act(site, 'open-admin'));
+      btn(ICON.stop, 'Stop', () => act(site, 'stop'), { danger: true });
+    } else {
+      btn(ICON.start, s === 'stopped' ? 'Start' : s,
+          () => act(site, 'start'), { primary: true });
+    }
+    if (site.job && site.job.has_log) btn(ICON.log, 'Log', () => showLog(site));
+    btn(ICON.domain, 'Local domain…', () => showDomain(site), { always: true });
+    btn(ICON.hide, 'Hide from UI', () => setHidden(site, true), { always: true });
+  }
+
+  if (errors.has(site.path)) {
+    const e = document.createElement('div');
+    e.className = 'rowerr';
+    e.textContent = errors.get(site.path);
+    wrap.appendChild(e);
+  }
+  return wrap;
+}
+
+async function act(site, action) {
+  busyPaths.add(site.path);
+  errors.delete(site.path);
+  try {
+    await post('/api/action', { path: site.path, action });
+  } catch (e) {
+    errors.set(site.path, e.message);
+  }
+  busyPaths.delete(site.path);
+  refresh();
+}
+
+async function fav(site) {
+  try {
+    await post('/api/favorite', { path: site.path, favorite: !site.favorite });
+  } catch (e) {
+    errors.set(site.path, e.message);
+  }
+  refresh();
+}
+
+async function setHidden(site, hidden) {
+  try {
+    await post('/api/hidden', { path: site.path, hidden });
+  } catch (e) {
+    errors.set(site.path, e.message);
+  }
+  refresh();
+}
+
+async function pollDomainsSetup() {
+  if (!el('domdlg').open) return;
+  try {
+    const st = await api('/api/domains-status');
+    el('domsetupbox').hidden = st.proxy;
+    if (st.setup === 'running') {
+      el('domsetupbtn').disabled = true;
+      if (!el('domsetupbtn').disabled) {
+        el('domsetupbtn').disabled = true;
+        el('domsetupbtn').textContent = 'Setting up…';
+      }
+      el('domsetuplog').hidden = !st.log;
+      el('domsetuplog').textContent = st.log;
+      el('domsetuplog').scrollTop = el('domsetuplog').scrollHeight;
+      setTimeout(pollDomainsSetup, 2000);
+    } else if (st.setup === 'error') {
+      el('domsetupbtn').disabled = false;
+      el('domsetupbtn').textContent = 'Retry setup';
+      el('domsetuplog').hidden = !st.log;
+      el('domsetuplog').textContent = st.log;
+      el('domsetuperr').textContent = 'Setup failed — see output above.';
+      el('domsetuperr').hidden = false;
+    } else if (st.proxy) {
+      el('domsetupbox').hidden = true;
+    }
+  } catch (e) {}
+}
+
+el('domsetupbtn').onclick = async () => {
+  el('domsetuperr').hidden = true;
+  try {
+    const res = await post('/api/domains-setup', {});
+    el('domsetupbtn').disabled = true;
+    el('domsetupbtn').textContent = res.mode === 'terminal'
+      ? 'Enter your password in the terminal window that just opened…'
+      : 'Check the system password dialog…';
+    setTimeout(pollDomainsSetup, 1500);
+  } catch (e) {
+    el('domsetuperr').textContent = e.message;
+    el('domsetuperr').hidden = false;
+  }
+};
+
+function showDomain(site) {
+  domainSite = site;
+  el('domerr').hidden = true;
+  el('domsetuperr').hidden = true;
+  el('domsetuplog').hidden = true;
+  el('domsetupbtn').disabled = false;
+  el('domsetupbtn').textContent = 'Set up local domains';
+  el('dominput').value = site.domain ||
+    site.name.toLowerCase().replace(/[^a-z0-9-]/g, '-') + '.' + DOMAIN_BASE;
+  el('domremove').hidden = !site.domain;
+  el('domdlg').showModal();
+  el('dominput').focus();
+  pollDomainsSetup();
+}
+
+async function saveDomain(domain) {
+  try {
+    const res = await post('/api/domain', { path: domainSite.path, domain });
+    if (res.warning) {
+      el('domerr').textContent = res.warning;
+      el('domerr').hidden = false;
+      refresh();
+      return;
+    }
+    el('domdlg').close();
+    refresh();
+  } catch (e) {
+    el('domerr').textContent = e.message;
+    el('domerr').hidden = false;
+  }
+}
+
+el('domform').onsubmit = (ev) => {
+  ev.preventDefault();
+  saveDomain(el('dominput').value.trim().toLowerCase());
+};
+el('domremove').onclick = () => saveDomain('');
+el('domcancel').onclick = () => el('domdlg').close();
+
+el('newsite').onclick = () => {
+  el('newerr').hidden = true;
+  el('newform').reset();
+  el('newsubmit').disabled = false;
+  el('newdlg').showModal();
+  el('newslug').focus();
+};
+el('newcancel').onclick = () => el('newdlg').close();
+el('newform').onsubmit = async (ev) => {
+  ev.preventDefault();
+  el('newsubmit').disabled = true;
+  try {
+    await post('/api/create', { slug: el('newslug').value.trim() });
+    el('newdlg').close();
+    refresh();
+  } catch (e) {
+    el('newerr').textContent = e.message;
+    el('newerr').hidden = false;
+    el('newsubmit').disabled = false;
+  }
+};
+
+async function updateLog() {
+  if (!logPath) return;
+  try {
+    const data = await api('/api/log?path=' + encodeURIComponent(logPath));
+    const body = el('logbody');
+    const atBottom =
+      body.scrollTop + body.clientHeight >= body.scrollHeight - 8;
+    body.textContent = data.log || '(empty)';
+    if (atBottom) body.scrollTop = body.scrollHeight;
+  } catch (e) {}
+}
+
+async function showLog(site) {
+  logPath = site.path;
+  const data = await api('/api/log?path=' + encodeURIComponent(site.path));
+  el('logtitle').textContent = site.name + ' — ' + data.action;
+  el('logbody').textContent = data.log || '(empty)';
+  el('logdlg').showModal();
+  el('logbody').scrollTop = el('logbody').scrollHeight;
+}
+
+async function refresh(force) {
+  try {
+    const res = await fetch('/api/sites?all=1' + (force ? '&refresh=1' : ''));
+    if (!res.ok) throw new Error(await res.text());
+    const scanning = res.headers.get('X-Scanning') === '1';
+    const all = await res.json();
+    const sites = all.filter((s) => !s.hidden);
+    const hiddenSites = all.filter((s) => s.hidden);
+    const main = el('sites');
+    main.replaceChildren(...sites.map(card));
+    if (!sites.length) {
+      main.innerHTML = '<div class="empty">' + (scanning
+        ? 'Scanning for projects…'
+        : hiddenSites.length
+          ? 'All projects are hidden.'
+          : 'No .wp-env.json projects found under the scan roots.') + '</div>';
+    }
+    if (hiddenSites.length) {
+      const box = document.createElement('details');
+      box.className = 'hiddenbox';
+      box.open = hiddenOpen;
+      const summary = document.createElement('summary');
+      summary.textContent = 'HIDDEN (' + hiddenSites.length + ')';
+      box.appendChild(summary);
+      hiddenSites.map(card).forEach((c) => box.appendChild(c));
+      box.addEventListener('toggle', () => { hiddenOpen = box.open; });
+      main.appendChild(box);
+    }
+    const up = sites.filter((s) => s.state === 'running').length;
+    el('sub').textContent =
+      sites.length + ' project' + (sites.length === 1 ? '' : 's')
+      + ' · ' + up + ' running' + (scanning ? ' · scanning…' : '');
+    if (scanning) setTimeout(() => refresh(), 1000);
+  } catch (e) {
+    el('sub').textContent = 'server unreachable';
+  }
+}
+
+el('rescan').onclick = () => refresh(true);
+el('logdlg').addEventListener('close', () => { logPath = null; });
+setInterval(updateLog, 1500);
+refresh();
+setInterval(refresh, 2500);
+</script>
+</body>
+</html>

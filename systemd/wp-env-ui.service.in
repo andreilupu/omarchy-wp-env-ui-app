@@ -1,0 +1,17 @@
+# Template for the wp-env-ui systemd user unit.
+# @SERVER_BIN@ is replaced at install time with a version-stable path to
+# bin/wp-env-ui-server: the checkout copy for dev installs (wp-env-ui-setup),
+# /usr/bin/wp-env-ui-server for the Arch package (PKGBUILD), or the mise shim
+# for mise-managed installs (so upgrades don't break the unit).
+
+[Unit]
+Description=wp-env control panel server
+
+[Service]
+ExecStart=@SERVER_BIN@
+Environment=PATH=%h/.local/share/mise/shims:%h/.local/bin:/usr/local/bin:/usr/bin:/bin
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=default.target

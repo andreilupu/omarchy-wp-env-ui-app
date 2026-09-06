@@ -1,0 +1,63 @@
+#!/bin/bash
+#
+# wp-env-ui
+#
+# Starts the wp-env control-panel server (if not already running) and opens
+# it as an Omarchy app-mode window. Exec target of the "wp-env" .desktop entry.
+#
+# Prefers the systemd user service (installed by install.sh) so the server
+# gets restart-on-failure and journal logging; falls back to running the
+# server directly.
+
+set -uo pipefail
+
+SERVER_ONLY=false
+[[ "${1:-}" == "--server-only" ]] && SERVER_ONLY=true
+
+PORT="${WP_ENV_UI_PORT:-8710}"
+URL="http://localhost:$PORT"
+LOG="$HOME/.cache/wp-env-ui.log"
+
+# Works from a git checkout (symlinked bins) and the Arch package.
+script_dir="$(dirname "$(readlink -f "$0")")"
+if [[ -f "$script_dir/../server/wp-env-ui.py" ]]; then
+  SERVER="$script_dir/../server/wp-env-ui.py"
+else
+  SERVER="/usr/share/wp-env-ui/server/wp-env-ui.py"
+fi
+
+# .desktop launches don't source the shell profile; mise provides python/node.
+export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
+
+ping_server() {
+  curl -fsS --max-time 1 -o /dev/null "$URL/api/ping"
+}
+
+start_server() {
+  if command -v systemctl >/dev/null &&
+     systemctl --user cat wp-env-ui.service &>/dev/null; then
+    systemctl --user start wp-env-ui.service && return
+  fi
+  # Cap the fallback log so it can't grow forever.
+  if [[ -f "$LOG" && $(stat -c%s "$LOG" 2>/dev/null || echo 0) -gt 1048576 ]]; then
+    mv -f "$LOG" "$LOG.1"
+  fi
+  setsid python3 "$SERVER" >>"$LOG" 2>&1 &
+}
+
+if ! ping_server; then
+  start_server
+  for _ in $(seq 1 40); do
+    ping_server && break
+    sleep 0.25
+  done
+  if ! ping_server; then
+    notify-send -u critical "wp-env" \
+      "Control panel failed to start — see $LOG or: journalctl --user -u wp-env-ui" 2>/dev/null
+    exit 1
+  fi
+fi
+
+$SERVER_ONLY && exit 0
+
+exec omarchy-launch-webapp "$URL"

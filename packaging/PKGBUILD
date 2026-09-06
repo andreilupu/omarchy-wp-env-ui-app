@@ -22,7 +22,7 @@ optdepends=(
 )
 install="$pkgname.install"
 source=("$pkgname-$pkgver.tar.gz::$url/archive/refs/tags/v$pkgver.tar.gz")
-sha256sums=('SKIP')
+sha256sums=('78ff242c31a9a4c243d46b9ead59d50857c3aade3b23ec690287ae97f737f151')
 
 package() {
   cd "omarchy-wp-env-ui-app-$pkgver"

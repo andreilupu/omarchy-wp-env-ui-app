@@ -45,8 +45,14 @@ fi
 # systemd user service: keeps the panel server always warm (instant app
 # start) with restart-on-failure + journal logging.
 if command -v systemctl >/dev/null && systemctl --user show-environment &>/dev/null; then
-  if [[ ! -f /usr/lib/systemd/user/wp-env-ui.service ]]; then
-    # Dev/mise install: generate the unit with a stable server path baked in.
+  if [[ "$APP_DIR" == "/usr/share/wp-env-ui" && -f /usr/lib/systemd/user/wp-env-ui.service ]]; then
+    # Packaged install: use the system-provided unit; drop any leftover
+    # dev/mise override so it doesn't shadow the package.
+    rm -f "$HOME/.config/systemd/user/wp-env-ui.service"
+    systemctl --user daemon-reload
+  else
+    # Dev/mise install: generate a user unit with a stable server path baked
+    # in — it takes precedence over a packaged unit if one is also present.
     mkdir -p "$HOME/.config/systemd/user"
     sed "s|@SERVER_BIN@|$SERVER_BIN|" "$APP_DIR/systemd/wp-env-ui.service.in" \
       >"$HOME/.config/systemd/user/wp-env-ui.service"

@@ -179,8 +179,8 @@
   <div class="phead">
     <span class="ptitle">WP-ENV SITES</span>
     <span class="sub" id="sub">loading…</span>
-    <button class="icon" id="newsite" title="New site"></button>
-    <button class="icon" id="rescan" title="Rescan"></button>
+    <button class="icon" id="newsite" title="New site"></button>
+    <button class="icon" id="rescan" title="Rescan"></button>
   </div>
   <div class="banner" id="banner" hidden></div>
   <main id="sites"></main>
@@ -258,6 +258,7 @@ const infoCache = new Map();   // path -> /api/info payload
 const logCache = new Map();    // path -> last fetched job log
 let domainSite = null;         // site the domain dialog is editing
 let hiddenOpen = false;
+let lastRenderSig = null;      // skip DOM teardown when nothing changed
 
 async function api(url, opts) {
   const res = await fetch(url, opts);
@@ -454,7 +455,7 @@ function renderOverview(site, pane) {
   add('Path', site.path);
   add('Port', ':' + site.port);
   pane.appendChild(kv);
-  fetchInfo(site.path).then((d) => {
+  const extra = (d) => {
     const merged = Object.assign({}, d.config || {}, d.override || {});
     add('Tests port', merged.testsPort ? ':' + merged.testsPort : null);
     add('PHP', merged.phpVersion || 'wp-env default');
@@ -464,7 +465,10 @@ function renderOverview(site, pane) {
     const mappings = Object.keys(merged.mappings || {}).length;
     add('Mounts', `${plugins} plugin${plugins === 1 ? '' : 's'} · ${themes} theme${themes === 1 ? '' : 's'} · ${mappings} mapping${mappings === 1 ? '' : 's'}`);
     add('Login', 'admin / password');
-  }).catch(() => {});
+  };
+  // synchronous when cached, so re-renders don't make the rows pop in late
+  if (infoCache.has(site.path)) extra(infoCache.get(site.path));
+  else fetchInfo(site.path).then(extra).catch(() => {});
 }
 
 function renderLogs(site, pane) {
@@ -649,6 +653,17 @@ async function refresh(force) {
     if (!res.ok) throw new Error(await res.text());
     const scanning = res.headers.get('X-Scanning') === '1';
     const docker = res.headers.get('X-Docker') || 'ok';
+    const payload = await res.text();
+    // Re-rendering every poll destroys text selection and focus; skip the
+    // whole DOM update when nothing observable changed. (Live log content
+    // is updated in place by pollLog, outside this cycle.)
+    const sig = JSON.stringify([payload, [...expanded], [...activeTab],
+      [...errors], [...busyPaths], scanning, docker]);
+    if (sig === lastRenderSig) {
+      if (scanning) setTimeout(() => refresh(), 1000);
+      return;
+    }
+    lastRenderSig = sig;
     const banner = el('banner');
     if (docker === 'missing') {
       banner.textContent = 'Docker is not installed — wp-env needs it to run sites. Install it and start the service (e.g. pacman -S docker && systemctl enable --now docker).';
@@ -659,7 +674,7 @@ async function refresh(force) {
     } else {
       banner.hidden = true;
     }
-    const all = await res.json();
+    const all = JSON.parse(payload);
     const sites = all.filter((s) => !s.hidden);
     const hiddenSites = all.filter((s) => s.hidden);
     const main = el('sites');

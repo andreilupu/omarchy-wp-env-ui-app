@@ -267,6 +267,13 @@ def load_domains() -> dict[str, str]:
     return {str(k): str(v) for k, v in data.items()}
 
 
+def active_domains() -> dict[str, str]:
+    """Domain assignments whose project directory still exists. Stale
+    entries (projects deleted outside the UI) must never block reusing
+    their domain."""
+    return {p: d for p, d in load_domains().items() if Path(p).is_dir()}
+
+
 def save_domain(path: str, domain: str | None) -> None:
     with LOCK:
         domains = load_domains()
@@ -623,7 +630,7 @@ def create_site(slug, port, start: bool = True) -> tuple[int, dict]:
     domain = None
     if domains_ready():
         candidate = f"{slug}.{DOMAIN_BASE}"
-        if candidate not in load_domains().values():
+        if candidate not in active_domains().values():
             domain = candidate
             save_domain(str(site_dir), domain)
             apply_domain_override(site_dir, domain)
@@ -1012,7 +1019,7 @@ class Handler(BaseHTTPRequestHandler):
                     self.send(400, {"error": "invalid domain name"})
                     return
                 taken = {
-                    p: d for p, d in load_domains().items()
+                    p: d for p, d in active_domains().items()
                     if d == domain and p != target
                 }
                 if taken:

@@ -25,7 +25,21 @@ set -euo pipefail
 
 [[ $EUID -eq 0 ]] || { echo "Run with sudo: sudo wp-env-domains-setup" >&2; exit 1; }
 
-SETUP_USER="${SUDO_USER:-$(logname 2>/dev/null || echo root)}"
+# Who gets the passwordless helper: sudo sets SUDO_USER, pkexec sets
+# PKEXEC_UID (the UI's polkit path), and logname often fails on modern
+# desktops without utmp entries.
+if [[ -n "${SUDO_USER:-}" ]]; then
+  SETUP_USER="$SUDO_USER"
+elif [[ -n "${PKEXEC_UID:-}" ]]; then
+  SETUP_USER="$(id -nu "$PKEXEC_UID")"
+else
+  SETUP_USER="$(logname 2>/dev/null || id -un)"
+fi
+[[ "$SETUP_USER" != "root" ]] || {
+  echo "Could not determine the invoking user (got root)." >&2
+  echo "Re-run as: sudo wp-env-domains-setup" >&2
+  exit 1
+}
 PROXY_ADDR="127.0.0.2"   # Caddy serves sites here
 ADMIN="127.0.0.1:2029"   # Caddy admin API (2019 is often taken by other stacks)
 HELPER_DIR="/usr/local/lib/wp-env-ui"
@@ -88,8 +102,12 @@ EOF
 mkdir -p /etc/systemd/system/caddy.service.d
 cat >/etc/systemd/system/caddy.service.d/wp-env.conf <<'EOF'
 # Managed by wp-env-domains-setup: run Caddy from the wp-env JSON config so
-# the wp-env-ui server can manage routes through the admin API.
+# the wp-env-ui server can manage routes through the admin API. ExecStartPre
+# must be reset too — the stock unit validates /etc/caddy/Caddyfile, which
+# may not exist.
 [Service]
+ExecStartPre=
+ExecStartPre=/usr/bin/caddy validate --config /etc/caddy/wp-env.json
 ExecStart=
 ExecStart=/usr/bin/caddy run --environ --config /etc/caddy/wp-env.json
 ExecReload=

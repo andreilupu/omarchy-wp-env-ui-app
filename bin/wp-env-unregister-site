@@ -28,7 +28,27 @@ done
 
 if [[ "${2:-}" == "--purge" && -d "$SITES_DIR/$slug" ]]; then
   export PATH="$HOME/.local/share/mise/shims:$HOME/.local/bin:$PATH"
-  (cd "$SITES_DIR/$slug" && npx @wordpress/env destroy <<<"y") || true
-  rm -rf "$SITES_DIR/$slug"
-  echo "Destroyed wp-env environment and removed $SITES_DIR/$slug"
+  site_dir="$SITES_DIR/$slug"
+
+  # Release the site's local domain (hosts entry + WP override + state) via
+  # the control-panel server; fall back to the raw pieces if it's down.
+  port="${WP_ENV_UI_PORT:-8710}"
+  if ! curl -fsS --max-time 5 -X POST -H 'Content-Type: application/json' \
+       -d "{\"path\":\"$site_dir\",\"domain\":\"\"}" \
+       "http://127.0.0.1:$port/api/domain" >/dev/null 2>&1; then
+    domains_file="$HOME/.local/state/wp-env-ui/domains.json"
+    if [[ -f "$domains_file" ]] && command -v jq >/dev/null; then
+      domain=$(jq -r --arg p "$site_dir" '.[$p] // empty' "$domains_file")
+      if [[ -n "$domain" ]]; then
+        sudo -n /usr/local/lib/wp-env-ui/hosts-helper remove "$domain" 2>/dev/null || true
+        tmp=$(mktemp) &&
+          jq --arg p "$site_dir" 'del(.[$p])' "$domains_file" >"$tmp" &&
+          mv "$tmp" "$domains_file"
+      fi
+    fi
+  fi
+
+  (cd "$site_dir" && npx @wordpress/env destroy <<<"y") || true
+  rm -rf "$site_dir"
+  echo "Destroyed wp-env environment and removed $site_dir"
 fi

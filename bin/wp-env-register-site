@@ -29,12 +29,19 @@ site_dir="$SITES_DIR/$slug"
 config="$site_dir/.wp-env.json"
 
 # Pick the lowest free even port from 8888 up, skipping ports (and their
-# tests ports) claimed by other sites' configs or already listening on the
-# machine (other wp-env projects, unrelated services).
+# tests ports) claimed by other sites' configs, by any project the control
+# panel has discovered (its cached project list), or already listening on
+# the machine.
 if [[ -z "$port" ]]; then
+  projects_cache="$HOME/.local/state/wp-env-ui/projects.json"
   used=$({
     cat "$SITES_DIR"/*/.wp-env.json 2>/dev/null |
       jq -r '.port // empty, .testsPort // empty' 2>/dev/null
+    if [[ -f "$projects_cache" ]]; then
+      jq -r '.[]' "$projects_cache" 2>/dev/null | while read -r proj; do
+        cat "$proj/.wp-env.json" "$proj/.wp-env.override.json" 2>/dev/null
+      done | jq -r '.port // empty, .testsPort // empty' 2>/dev/null
+    fi
     ss -ltnH 2>/dev/null | awk '{n=split($4,a,":"); print a[n]}'
   } | grep -E '^[0-9]+$' | sort -n | uniq || true)
   port=8888

@@ -35,6 +35,7 @@ esac
 grep -qxF "$BEGIN" "$HOSTS" || printf '\n%s\n%s\n' "$BEGIN" "$END" >>"$HOSTS"
 
 tmp=$(mktemp "$HOSTS.wp-env.XXXXXX")
+trap 'rm -f "$tmp"' EXIT INT TERM
 awk -v begin="$BEGIN" -v end="$END" -v ip="$IP" -v domain="$domain" \
     -v cmd="$cmd" '
   $0 == begin { inside = 1; print; next }
@@ -47,3 +48,4 @@ awk -v begin="$BEGIN" -v end="$END" -v ip="$IP" -v domain="$domain" \
 ' "$HOSTS" >"$tmp"
 chmod 644 "$tmp"
 mv "$tmp" "$HOSTS"
+trap - EXIT

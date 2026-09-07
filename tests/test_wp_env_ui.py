@@ -835,10 +835,14 @@ class HttpApiTest(unittest.TestCase):
             mod.start_job = saved_start
 
     def test_duplicate_domain_rejected(self):
+        # the conflicting project must exist — dead paths are treated as
+        # stale and never block reuse (see the stale-entry test)
+        other = Path(self.tmp.name) / "other-live-project"
+        other.mkdir(exist_ok=True)
         with mod.LOCK:
             mod.DOMAINS_FILE.parent.mkdir(parents=True, exist_ok=True)
             mod.DOMAINS_FILE.write_text(
-                json.dumps({"/somewhere/else": "taken.wp.site"})
+                json.dumps({str(other): "taken.wp.site"})
             )
         try:
             status, _, raw = self.request(
@@ -846,10 +850,34 @@ class HttpApiTest(unittest.TestCase):
                 body={"path": str(self.project), "domain": "taken.wp.site"},
             )
             self.assertEqual(status, 409)
-            self.assertIn("else", json.loads(raw)["error"])
+            self.assertIn("other-live-project", json.loads(raw)["error"])
         finally:
             with mod.LOCK:
                 mod.DOMAINS_FILE.unlink()
+
+    def test_stale_domain_entry_does_not_block_reuse(self):
+        saved_start = mod.start_job
+        mod.start_job = lambda p, a: True
+        with mod.LOCK:
+            mod.DOMAINS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            mod.DOMAINS_FILE.write_text(
+                json.dumps({"/deleted/project/gone": "reusable.wp.site"})
+            )
+        try:
+            status, _, _ = self.request(
+                "POST", "/api/domain",
+                body={"path": str(self.project),
+                      "domain": "reusable.wp.site"},
+            )
+            self.assertEqual(status, 200)  # dead path must not 409
+        finally:
+            mod.start_job = saved_start
+            self.request(
+                "POST", "/api/domain",
+                body={"path": str(self.project), "domain": ""},
+            )
+            with mod.LOCK:
+                mod.DOMAINS_FILE.unlink(missing_ok=True)
 
     def test_domain_on_unknown_path_rejected(self):
         status, _, _ = self.request(

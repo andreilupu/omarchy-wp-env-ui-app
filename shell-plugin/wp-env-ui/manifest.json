@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "wp-env-ui",
   "name": "wp-env",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "Andrei Lupu",
   "license": "MIT",
   "description": "Start, stop, and open wp-env WordPress sites from the Omarchy bar.",

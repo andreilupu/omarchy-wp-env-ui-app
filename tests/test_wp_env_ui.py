@@ -12,6 +12,7 @@ CSRF/DNS-rebinding origin checks.
 
 import importlib.util
 import json
+import subprocess
 import tempfile
 import threading
 import time
@@ -19,6 +20,7 @@ import unittest
 from http.client import HTTPConnection
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -332,6 +334,48 @@ class CreateSiteTest(unittest.TestCase):
         self.assertEqual(mod.load_domains(), {})
 
 
+class DockerStateTest(unittest.TestCase):
+    """docker_ports_by_name records why Docker is unusable."""
+
+    def tearDown(self):
+        mod.DOCKER_STATE["status"] = "ok"
+
+    def test_missing_binary(self):
+        with mock.patch.object(
+            mod.subprocess, "run", side_effect=FileNotFoundError("docker")
+        ):
+            self.assertEqual(mod.docker_ports_by_name(), {})
+        self.assertEqual(mod.DOCKER_STATE["status"], "missing")
+
+    def test_daemon_down(self):
+        failed = subprocess.CompletedProcess(
+            ["docker"], returncode=1, stdout="",
+            stderr="Cannot connect to the Docker daemon",
+        )
+        with mock.patch.object(mod.subprocess, "run", return_value=failed):
+            self.assertEqual(mod.docker_ports_by_name(), {})
+        self.assertEqual(mod.DOCKER_STATE["status"], "down")
+
+    def test_timeout_counts_as_down(self):
+        with mock.patch.object(
+            mod.subprocess, "run",
+            side_effect=subprocess.TimeoutExpired(["docker"], 10),
+        ):
+            self.assertEqual(mod.docker_ports_by_name(), {})
+        self.assertEqual(mod.DOCKER_STATE["status"], "down")
+
+    def test_ok_resets_state(self):
+        mod.DOCKER_STATE["status"] = "down"
+        good = subprocess.CompletedProcess(
+            ["docker"], returncode=0, stdout="c1-wordpress-1\t:80\n", stderr=""
+        )
+        with mock.patch.object(mod.subprocess, "run", return_value=good):
+            self.assertEqual(
+                mod.docker_ports_by_name(), {"c1-wordpress-1": ":80"}
+            )
+        self.assertEqual(mod.DOCKER_STATE["status"], "ok")
+
+
 class CleanLogLineTest(unittest.TestCase):
     def test_strips_ansi_and_carriage_returns(self):
         self.assertEqual(
@@ -568,7 +612,19 @@ class HttpApiTest(unittest.TestCase):
 
     def test_ping(self):
         status, _, data = self.get_json("/api/ping")
-        self.assertEqual((status, data), (200, {"ok": True}))
+        self.assertEqual(status, 200)
+        self.assertTrue(data["ok"])
+        self.assertIn(data["docker"], ("ok", "down", "missing"))
+
+    def test_docker_header_on_sites(self):
+        mod.DOCKER_STATE["status"] = "down"
+        try:
+            _, headers, _ = self.get_json("/api/sites")
+            self.assertEqual(headers["X-Docker"], "down")
+        finally:
+            mod.DOCKER_STATE["status"] = "ok"
+        _, headers, _ = self.get_json("/api/sites")
+        self.assertEqual(headers["X-Docker"], "ok")
 
     def test_index_serves_html(self):
         status, headers, raw = self.request("GET", "/")

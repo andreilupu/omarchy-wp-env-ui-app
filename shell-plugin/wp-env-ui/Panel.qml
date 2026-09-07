@@ -32,6 +32,7 @@ Panel {
   property bool cursorActive: false
   property int cursorIndex: 0
   property string lastError: ""
+  property string dockerStatus: "ok"
 
   readonly property int runningCount: {
     var n = 0
@@ -49,6 +50,7 @@ Panel {
 
   function refresh() {
     if (!fetchProc.running) fetchProc.running = true
+    if (opened && !pingProc.running) pingProc.running = true
   }
 
   // POST an action; the poll timer picks up the resulting state and a quick
@@ -146,6 +148,20 @@ Panel {
     id: refreshSoon
     interval: 500
     onTriggered: root.refresh()
+  }
+
+  Process {
+    id: pingProc
+    command: ["curl", "-fsS", "--max-time", "2", root.apiBase + "/api/ping"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        try {
+          var res = JSON.parse(String(text || ""))
+          root.dockerStatus = res && res.docker ? res.docker : "ok"
+        } catch (e) { /* server down: the serverUp path covers it */ }
+      }
+    }
   }
 
   Process {
@@ -258,6 +274,19 @@ Panel {
             foreground: root.foreground
             onClicked: root.openApp()
           }
+        }
+
+        // ---------- docker down ----------
+        Text {
+          visible: root.serverUp && root.dockerStatus !== "ok"
+          width: parent.width
+          text: root.dockerStatus === "missing"
+            ? "Docker is not installed — wp-env needs it to run sites."
+            : "Docker is not running — sites can't start. systemctl start docker"
+          wrapMode: Text.WordWrap
+          color: root.favColor
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
         }
 
         // ---------- last action error ----------

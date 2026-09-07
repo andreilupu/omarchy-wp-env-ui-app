@@ -144,16 +144,30 @@ def parse_mapped_port(ports: str) -> int | None:
     return int(match.group(1)) if match else None
 
 
+# Last observed Docker health — "ok", "down" (daemon unreachable), or
+# "missing" (binary not installed). Surfaced to the UIs so "everything shows
+# stopped" is explainable.
+DOCKER_STATE = {"status": "ok"}
+
+
 def docker_ports_by_name() -> dict[str, str]:
     try:
-        out = subprocess.run(
+        proc = subprocess.run(
             ["docker", "ps", "--format", "{{.Names}}\t{{.Ports}}"],
             capture_output=True, text=True, timeout=10,
-        ).stdout
-    except (FileNotFoundError, subprocess.TimeoutExpired):
+        )
+    except FileNotFoundError:
+        DOCKER_STATE["status"] = "missing"
         return {}
+    except subprocess.TimeoutExpired:
+        DOCKER_STATE["status"] = "down"
+        return {}
+    if proc.returncode != 0:
+        DOCKER_STATE["status"] = "down"
+        return {}
+    DOCKER_STATE["status"] = "ok"
     result = {}
-    for line in out.splitlines():
+    for line in proc.stdout.splitlines():
         name, _, ports = line.partition("\t")
         result[name] = ports
     return result
@@ -906,7 +920,7 @@ class Handler(BaseHTTPRequestHandler):
             except OSError:
                 self.send(404, {"error": "no icon"})
         elif path == "/api/ping":
-            self.send(200, {"ok": True})
+            self.send(200, {"ok": True, "docker": DOCKER_STATE["status"]})
         elif path == "/api/sites":
             sites = site_list(
                 force_scan="1" in params.get("refresh", []),
@@ -915,7 +929,11 @@ class Handler(BaseHTTPRequestHandler):
             with LOCK:
                 scanning = CACHE["scanning"]
             self.send(
-                200, sites, headers=[("X-Scanning", "1" if scanning else "0")]
+                200, sites,
+                headers=[
+                    ("X-Scanning", "1" if scanning else "0"),
+                    ("X-Docker", DOCKER_STATE["status"]),
+                ],
             )
         elif path == "/api/domains-status":
             self.send(200, domains_status())
